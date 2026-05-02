@@ -1,5 +1,5 @@
 {
-  "cache_time": 7200,
+  "cache_time": 86400,
   "api_site": {
     "dyttzy": {
       "api": "http://caiji.dyttzyapi.com/api.php/provide/vod",
@@ -98,6 +98,5 @@
       "api": "https://api.yongjiuzy.cc/provide/vod",
       "name": "永久资源"
     }
-    
   }
 }
