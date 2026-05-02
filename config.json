@@ -52,6 +52,7 @@
     "iqiyizyapi": {
       "api": "https://iqiyizyapi.com/api.php/provide/vod",
       "name": "-爱奇艺-",
+      "detail": "https://iqiyizyapi.com",
     },
     "mozhua": {
       "api": "https://mozhuazy.com/api.php/provide/vod",
