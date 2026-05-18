@@ -348,9 +348,14 @@ class HybridCacheManager {
 const cacheManager = HybridCacheManager.getInstance();
 
 // ---- 错误处理辅助函数 ----
+
+// 防止错误恢复请求的级联：记录各类数据最后一次恢复尝试的时间
+const lastRecoveryAttempt: Record<string, number> = {};
+const RECOVERY_COOLDOWN_MS = 30000; // 30秒内不重复尝试恢复
+
 /**
  * 数据库操作失败时的通用错误处理
- * 立即从数据库刷新对应类型的缓存以保持数据一致性
+ * 使用冷却期防止级联请求风暴
  */
 async function handleDatabaseOperationFailure(
   dataType: 'playRecords' | 'favorites' | 'searchHistory',
@@ -358,6 +363,16 @@ async function handleDatabaseOperationFailure(
 ): Promise<void> {
   console.error(`数据库操作失败 (${dataType}):`, error);
   triggerGlobalError(`数据库操作失败`);
+
+  // 冷却期检查：避免短时间内大量恢复请求
+  const now = Date.now();
+  if (
+    lastRecoveryAttempt[dataType] &&
+    now - lastRecoveryAttempt[dataType] < RECOVERY_COOLDOWN_MS
+  ) {
+    return;
+  }
+  lastRecoveryAttempt[dataType] = now;
 
   try {
     let freshData: any;
@@ -393,7 +408,7 @@ async function handleDatabaseOperationFailure(
     );
   } catch (refreshErr) {
     console.error(`刷新${dataType}缓存失败:`, refreshErr);
-    triggerGlobalError(`刷新${dataType}缓存失败`);
+    // 不再触发 globalError，避免级联错误提示
   }
 }
 

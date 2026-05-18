@@ -190,6 +190,7 @@ function PlayPageClient() {
   // 播放进度保存相关
   const saveIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastSaveTimeRef = useRef<number>(0);
+  const saveInProgressRef = useRef<boolean>(false);
 
   const artPlayerRef = useRef<any>(null);
   const artRef = useRef<HTMLDivElement | null>(null);
@@ -1017,6 +1018,9 @@ function PlayPageClient() {
   // ---------------------------------------------------------------------------
   // 保存播放进度
   const saveCurrentPlayProgress = async () => {
+    // 防止并发保存请求堆积
+    if (saveInProgressRef.current) return;
+
     if (
       !artPlayerRef.current ||
       !currentSourceRef.current ||
@@ -1036,6 +1040,7 @@ function PlayPageClient() {
       return;
     }
 
+    saveInProgressRef.current = true;
     try {
       await savePlayRecord(currentSourceRef.current, currentIdRef.current, {
         title: videoTitleRef.current,
@@ -1059,6 +1064,8 @@ function PlayPageClient() {
       });
     } catch (err) {
       console.error('保存播放进度失败:', err);
+    } finally {
+      saveInProgressRef.current = false;
     }
   };
 
@@ -1542,11 +1549,16 @@ function PlayPageClient() {
 
       artPlayerRef.current.on('video:timeupdate', () => {
         const now = Date.now();
+        // 使用 runtime config 获取存储类型，而非 build-time 环境变量
+        const storageType =
+          (typeof window !== 'undefined' &&
+            (window as any).RUNTIME_CONFIG?.STORAGE_TYPE) ||
+          'localstorage';
         let interval = 5000;
-        if (process.env.NEXT_PUBLIC_STORAGE_TYPE === 'd1') {
+        if (storageType === 'd1') {
           interval = 10000;
         }
-        if (process.env.NEXT_PUBLIC_STORAGE_TYPE === 'upstash') {
+        if (storageType === 'upstash') {
           interval = 20000;
         }
         if (now - lastSaveTimeRef.current > interval) {
