@@ -20,6 +20,25 @@ interface VideoInfo {
   hasError?: boolean; // 添加错误状态标识
 }
 
+export type SourceStatus =
+  | 'unknown'
+  | 'current'
+  | 'available'
+  | 'slow'
+  | 'failed';
+
+const handleImageFallback = (
+  event: React.SyntheticEvent<HTMLImageElement>,
+  originalUrl: string
+) => {
+  const target = event.currentTarget;
+  if (target.src !== originalUrl && originalUrl) {
+    target.src = originalUrl;
+    return;
+  }
+  target.style.display = 'none';
+};
+
 interface EpisodeSelectorProps {
   /** 总集数 */
   totalEpisodes: number;
@@ -40,6 +59,7 @@ interface EpisodeSelectorProps {
   sourceSearchError?: string | null;
   /** 预计算的测速结果，避免重复测速 */
   precomputedVideoInfo?: Map<string, VideoInfo>;
+  sourceStatusMap?: Map<string, SourceStatus>;
 }
 
 /**
@@ -58,6 +78,7 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
   sourceSearchLoading = false,
   sourceSearchError = null,
   precomputedVideoInfo,
+  sourceStatusMap = new Map(),
 }) => {
   const router = useRouter();
   const pageCount = Math.ceil(totalEpisodes / episodesPerPage);
@@ -295,6 +316,54 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
     [onSourceChange]
   );
 
+  const getSourceStatus = useCallback(
+    (source: SearchResult, info?: VideoInfo): SourceStatus => {
+      const sourceKey = `${source.source}-${source.id}`;
+      const explicitStatus = sourceStatusMap.get(sourceKey);
+      if (explicitStatus) return explicitStatus;
+      if (info?.hasError) return 'failed';
+      if (info?.pingTime && info.pingTime > 2500) return 'slow';
+      if (info && !info.hasError) return 'available';
+      return 'unknown';
+    },
+    [sourceStatusMap]
+  );
+
+  const getStatusMeta = (status: SourceStatus) => {
+    switch (status) {
+      case 'current':
+        return {
+          label: '当前源',
+          className:
+            'bg-neon/10 text-neon border border-neon/30 dark:bg-neon/20',
+        };
+      case 'available':
+        return {
+          label: '可播',
+          className:
+            'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20 dark:text-emerald-400',
+        };
+      case 'slow':
+        return {
+          label: '加载慢',
+          className:
+            'bg-amber-500/10 text-amber-600 border border-amber-500/20 dark:text-amber-400',
+        };
+      case 'failed':
+        return {
+          label: '检测失败',
+          className:
+            'bg-red-500/10 text-red-600 border border-red-500/20 dark:text-red-400',
+        };
+      default:
+        return {
+          label: '待检测',
+          className:
+            'bg-gray-500/10 text-gray-500 border border-gray-500/20 dark:text-gray-400',
+        };
+    }
+  };
+
   const currentStart = currentPage * episodesPerPage + 1;
   const currentEnd = Math.min(
     currentStart + episodesPerPage - 1,
@@ -465,12 +534,32 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
                       b.id?.toString() === currentId?.toString();
                     if (aIsCurrent && !bIsCurrent) return -1;
                     if (!aIsCurrent && bIsCurrent) return 1;
-                    return 0;
+                    const aKey = `${a.source}-${a.id}`;
+                    const bKey = `${b.source}-${b.id}`;
+                    const aInfo = videoInfoMap.get(aKey);
+                    const bInfo = videoInfoMap.get(bKey);
+                    const statusWeight: Record<SourceStatus, number> = {
+                      current: 0,
+                      available: 1,
+                      unknown: 2,
+                      slow: 3,
+                      failed: 4,
+                    };
+                    return (
+                      statusWeight[getSourceStatus(a, aInfo)] -
+                      statusWeight[getSourceStatus(b, bInfo)]
+                    );
                   })
                   .map((source, index) => {
                     const isCurrentSource =
                       source.source?.toString() === currentSource?.toString() &&
                       source.id?.toString() === currentId?.toString();
+                    const sourceKey = `${source.source}-${source.id}`;
+                    const videoInfo = videoInfoMap.get(sourceKey);
+                    const sourceStatus = isCurrentSource
+                      ? 'current'
+                      : getSourceStatus(source, videoInfo);
+                    const statusMeta = getStatusMeta(sourceStatus);
                     return (
                       <div
                         key={`${source.source}-${source.id}`}
@@ -481,6 +570,8 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
                       ${
                         isCurrentSource
                           ? 'bg-neon/10 dark:bg-neon/20 border-neon/30 border'
+                          : sourceStatus === 'failed'
+                          ? 'bg-red-500/5 hover:bg-red-500/10 cursor-pointer'
                           : 'hover:bg-gray-200/50 dark:hover:bg-white/10 hover:scale-[1.02] cursor-pointer'
                       }`.trim()}
                       >
@@ -491,10 +582,9 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
                               src={processImageUrl(source.poster)}
                               alt={source.title}
                               className='w-full h-full object-cover'
-                              onError={(e) => {
-                                const target = e.target as HTMLImageElement;
-                                target.style.display = 'none';
-                              }}
+                              onError={(e) =>
+                                handleImageFallback(e, source.poster)
+                              }
                             />
                           )}
                         </div>
@@ -516,9 +606,6 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
                               )}
                             </div>
                             {(() => {
-                              const sourceKey = `${source.source}-${source.id}`;
-                              const videoInfo = videoInfoMap.get(sourceKey);
-
                               if (videoInfo && videoInfo.quality !== '未知') {
                                 if (videoInfo.hasError) {
                                   return (
@@ -556,9 +643,16 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
 
                           {/* 源名称和集数信息 - 垂直居中 */}
                           <div className='flex items-center justify-between'>
-                            <span className='text-xs px-2 py-1 border border-gray-500/60 rounded text-gray-700'>
-                              {source.source_name}
-                            </span>
+                            <div className='flex min-w-0 items-center gap-1.5'>
+                              <span className='truncate text-xs px-2 py-1 border border-gray-500/60 rounded text-gray-700 dark:text-gray-300'>
+                                {source.source_name}
+                              </span>
+                              <span
+                                className={`whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] leading-4 ${statusMeta.className}`}
+                              >
+                                {statusMeta.label}
+                              </span>
+                            </div>
                             {source.episodes.length > 1 && (
                               <span className='text-xs text-gray-500 dark:text-gray-400 font-medium'>
                                 {source.episodes.length} 集

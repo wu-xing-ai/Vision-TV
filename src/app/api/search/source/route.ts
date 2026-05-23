@@ -10,38 +10,41 @@ export const runtime = 'edge';
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const query = searchParams.get('q');
+  const resourceId = searchParams.get('resourceId');
 
-  if (!query) {
-    const cacheTime = await getCacheTime();
+  if (!query || !resourceId) {
     return NextResponse.json(
-      { results: [] },
-      {
-        headers: {
-          'Cache-Control': `public, max-age=${cacheTime}, s-maxage=${cacheTime}`,
-          'CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-          'Vercel-CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-        },
-      }
+      { results: [], error: '缺少必要参数: q 或 resourceId' },
+      { status: 400 }
     );
   }
 
   const config = await getConfig();
   const apiSites = config.SourceConfig.filter((site) => !site.disabled);
-  const searchPromises = apiSites.map((site) => searchFromApi(site, query));
+  const targetSite = apiSites.find((site) => site.key === resourceId);
+
+  if (!targetSite) {
+    return NextResponse.json(
+      { results: [], error: `未找到指定的视频源: ${resourceId}` },
+      { status: 404 }
+    );
+  }
 
   try {
-    const results = await Promise.all(searchPromises);
-    let flattenedResults = results.flat();
+    let results = await searchFromApi(targetSite, query);
     if (!config.SiteConfig.DisableYellowFilter) {
-      flattenedResults = flattenedResults.filter((result) => {
+      results = results.filter((result) => {
         const typeName = result.type_name || '';
         return !yellowWords.some((word: string) => typeName.includes(word));
       });
     }
-    const cacheTime = await getCacheTime();
 
+    const cacheTime = await getCacheTime();
     return NextResponse.json(
-      { results: normalizeSearchResults(flattenedResults, query) },
+      {
+        results: normalizeSearchResults(results, query),
+        source: { key: targetSite.key, name: targetSite.name },
+      },
       {
         headers: {
           'Cache-Control': `public, max-age=${cacheTime}, s-maxage=${cacheTime}`,
@@ -51,6 +54,12 @@ export async function GET(request: Request) {
       }
     );
   } catch (error) {
-    return NextResponse.json({ error: '搜索失败' }, { status: 500 });
+    return NextResponse.json(
+      {
+        results: [],
+        error: error instanceof Error ? error.message : '搜索失败',
+      },
+      { status: 500 }
+    );
   }
 }

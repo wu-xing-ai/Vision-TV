@@ -543,7 +543,8 @@ export async function savePlayRecord(
       })
     );
 
-    // 异步同步到数据库
+    // 异步同步到数据库（失败时不触发恢复请求，避免请求风暴）
+    // 缓存已乐观更新，下次保存会自动重试
     try {
       await fetchWithAuth('/api/playrecords', {
         method: 'POST',
@@ -553,9 +554,9 @@ export async function savePlayRecord(
         body: JSON.stringify({ key, record }),
       });
     } catch (err) {
-      await handleDatabaseOperationFailure('playRecords', err);
-      triggerGlobalError('保存播放记录失败');
-      throw err;
+      console.warn('保存播放记录到数据库失败，已缓存本地:', err);
+      // 不调用 handleDatabaseOperationFailure，避免级联请求
+      // 不 throw，避免上层重复处理
     }
     return;
   }
