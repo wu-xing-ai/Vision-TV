@@ -236,22 +236,21 @@ export default function VideoCard({
   );
 
   const handleClick = useCallback(() => {
+    const playParams = new URLSearchParams();
+
     if (from === 'douban') {
-      router.push(
-        `/play?title=${encodeURIComponent(actualTitle.trim())}${
-          actualYear ? `&year=${actualYear}` : ''
-        }${actualSearchType ? `&stype=${actualSearchType}` : ''}`
-      );
+      playParams.set('title', actualTitle.trim());
+      if (actualYear) playParams.set('year', actualYear);
+      if (actualSearchType) playParams.set('stype', actualSearchType);
+      router.push(`/play?${playParams.toString()}`);
     } else if (actualSource && actualId) {
-      router.push(
-        `/play?source=${actualSource}&id=${actualId}&title=${encodeURIComponent(
-          actualTitle
-        )}${actualYear ? `&year=${actualYear}` : ''}${
-          isAggregate ? '&prefer=true' : ''
-        }${
-          actualQuery ? `&stitle=${encodeURIComponent(actualQuery.trim())}` : ''
-        }${actualSearchType ? `&stype=${actualSearchType}` : ''}`
-      );
+      playParams.set('source', actualSource);
+      playParams.set('id', actualId);
+      playParams.set('title', actualTitle);
+      if (actualYear) playParams.set('year', actualYear);
+      if (actualQuery) playParams.set('stitle', actualQuery.trim());
+      if (actualSearchType) playParams.set('stype', actualSearchType);
+      router.push(`/play?${playParams.toString()}`);
     }
   }, [
     from,
@@ -260,7 +259,6 @@ export default function VideoCard({
     router,
     actualTitle,
     actualYear,
-    isAggregate,
     actualQuery,
     actualSearchType,
   ]);

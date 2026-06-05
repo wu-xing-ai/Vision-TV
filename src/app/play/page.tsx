@@ -29,6 +29,7 @@ import EpisodeSelector from '@/components/EpisodeSelector';
 import PageLayout from '@/components/PageLayout';
 
 type PlayerSourceStatus = Exclude<SourceStatus, 'current'>;
+const SOURCE_PROBE_TIMEOUT_MS = 5000;
 
 // 扩展 HTMLVideoElement 类型以支持 hls 属性
 declare global {
@@ -233,6 +234,23 @@ function PlayPageClient() {
   // 工具函数（Utils）
   // -----------------------------------------------------------------------------
 
+  const probeVideoSource = (url: string) => {
+    return new Promise<{
+      quality: string;
+      loadSpeed: string;
+      pingTime: number;
+    }>((resolve, reject) => {
+      const timeoutId = window.setTimeout(() => {
+        reject(new Error('播放源测速超时'));
+      }, SOURCE_PROBE_TIMEOUT_MS);
+
+      getVideoResolutionFromM3u8(url)
+        .then(resolve)
+        .catch(reject)
+        .finally(() => window.clearTimeout(timeoutId));
+    });
+  };
+
   // 播放源优选函数
   const preferBestSource = async (
     sources: SearchResult[]
@@ -261,7 +279,7 @@ function PlayPageClient() {
               source.episodes.length > 1
                 ? source.episodes[1]
                 : source.episodes[0];
-            const testResult = await getVideoResolutionFromM3u8(episodeUrl);
+            const testResult = await probeVideoSource(episodeUrl);
 
             return {
               source,
@@ -776,7 +794,10 @@ function PlayPageClient() {
         setSourceSearchLoading(false);
       }
     };
-    const fetchSourcesData = async (query: string): Promise<SearchResult[]> => {
+    const fetchSourcesData = async (
+      query: string,
+      updateAvailableSources = true
+    ): Promise<SearchResult[]> => {
       // 根据搜索词获取全部源信息
       try {
         const response = await fetch(
@@ -800,11 +821,15 @@ function PlayPageClient() {
                 (searchType === 'movie' && result.episodes.length === 1)
               : true)
         );
-        setAvailableSources(results);
+        if (updateAvailableSources) {
+          setAvailableSources(results);
+        }
         return results;
       } catch (err) {
         setSourceSearchError(err instanceof Error ? err.message : '搜索失败');
-        setAvailableSources([]);
+        if (updateAvailableSources) {
+          setAvailableSources([]);
+        }
         return [];
       } finally {
         setSourceSearchLoading(false);
@@ -825,7 +850,39 @@ function PlayPageClient() {
           : '🔍 正在搜索播放源...'
       );
 
-      let sourcesInfo = await fetchSourcesData(searchTitle || videoTitle);
+      const hasDirectSource =
+        Boolean(currentSource && currentId) && !needPreferRef.current;
+      let sourcesInfo = hasDirectSource
+        ? await fetchSourceDetail(currentSource, currentId)
+        : await fetchSourcesData(searchTitle || videoTitle);
+
+      if (hasDirectSource && sourcesInfo.length > 0) {
+        fetchSourcesData(searchTitle || videoTitle, false).then(
+          (backgroundSources) => {
+            if (backgroundSources.length === 0) return;
+
+            const hasCurrentSource = backgroundSources.some(
+              (source) =>
+                source.source === currentSource && source.id === currentId
+            );
+
+            const mergedSources = hasCurrentSource
+              ? backgroundSources
+              : [...sourcesInfo, ...backgroundSources];
+            setAvailableSources(
+              Array.from(
+                new Map(
+                  mergedSources.map((source) => [
+                    `${source.source}-${source.id}`,
+                    source,
+                  ])
+                ).values()
+              )
+            );
+          }
+        );
+      }
+
       if (
         currentSource &&
         currentId &&
