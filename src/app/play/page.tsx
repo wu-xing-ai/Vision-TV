@@ -21,6 +21,7 @@ import {
   saveSkipConfig,
   subscribeToDataUpdates,
 } from '@/lib/db.client';
+import { normalizeSearchText } from '@/lib/searchRank';
 import { SearchResult } from '@/lib/types';
 import { getVideoResolutionFromM3u8, processImageUrl } from '@/lib/utils';
 
@@ -790,8 +791,6 @@ function PlayPageClient() {
       } catch (err) {
         console.error('获取视频详情失败:', err);
         return [];
-      } finally {
-        setSourceSearchLoading(false);
       }
     };
     const fetchSourcesData = async (
@@ -809,18 +808,37 @@ function PlayPageClient() {
         const data = await response.json();
 
         // 处理搜索结果，根据规则过滤
-        const results = data.results.filter(
-          (result: SearchResult) =>
-            result.title.replaceAll(' ', '').toLowerCase() ===
-              videoTitleRef.current.replaceAll(' ', '').toLowerCase() &&
-            (videoYearRef.current
-              ? result.year.toLowerCase() === videoYearRef.current.toLowerCase()
-              : true) &&
-            (searchType
-              ? (searchType === 'tv' && result.episodes.length > 1) ||
-                (searchType === 'movie' && result.episodes.length === 1)
-              : true)
-        );
+        const results = data.results.filter((result: SearchResult) => {
+          // 标题为空时跳过标题过滤（从详情页进入时标题可能还未加载）
+          const currentTitle = normalizeSearchText(videoTitleRef.current);
+          if (currentTitle) {
+            const normalizedTitle = normalizeSearchText(result.title);
+            const titleMatch =
+              normalizedTitle === currentTitle ||
+              normalizedTitle.includes(currentTitle) ||
+              currentTitle.includes(normalizedTitle);
+            if (!titleMatch) return false;
+          }
+          // 年份允许±1年误差（不同源可能有细微差异）
+          if (
+            videoYearRef.current &&
+            result.year &&
+            result.year !== 'unknown'
+          ) {
+            const yearDiff = Math.abs(
+              Number(result.year) - Number(videoYearRef.current)
+            );
+            if (yearDiff > 1) return false;
+          }
+          // 类型过滤
+          if (searchType) {
+            if (searchType === 'tv' && result.episodes.length <= 1)
+              return false;
+            if (searchType === 'movie' && result.episodes.length > 1)
+              return false;
+          }
+          return true;
+        });
         if (updateAvailableSources) {
           setAvailableSources(results);
         }
@@ -831,8 +849,6 @@ function PlayPageClient() {
           setAvailableSources([]);
         }
         return [];
-      } finally {
-        setSourceSearchLoading(false);
       }
     };
 
@@ -852,13 +868,26 @@ function PlayPageClient() {
 
       const hasDirectSource =
         Boolean(currentSource && currentId) && !needPreferRef.current;
-      let sourcesInfo = hasDirectSource
-        ? await fetchSourceDetail(currentSource, currentId)
-        : await fetchSourcesData(searchTitle || videoTitle);
+      let sourcesInfo: SearchResult[];
+      if (hasDirectSource) {
+        sourcesInfo = await fetchSourceDetail(currentSource, currentId);
+      } else {
+        setSourceSearchLoading(true);
+        sourcesInfo = await fetchSourcesData(searchTitle || videoTitle);
+        setSourceSearchLoading(false);
+      }
 
       if (hasDirectSource && sourcesInfo.length > 0) {
-        fetchSourcesData(searchTitle || videoTitle, false).then(
-          (backgroundSources) => {
+        // 如果URL没有标题，用详情接口返回的标题
+        if (!searchTitle && !videoTitle && sourcesInfo[0].title) {
+          videoTitleRef.current = sourcesInfo[0].title;
+        }
+        const searchQuery =
+          searchTitle || videoTitle || sourcesInfo[0].title || '';
+        if (searchQuery) {
+          setSourceSearchLoading(true);
+          fetchSourcesData(searchQuery, false).then((backgroundSources) => {
+            setSourceSearchLoading(false);
             if (backgroundSources.length === 0) return;
 
             const hasCurrentSource = backgroundSources.some(
@@ -879,8 +908,8 @@ function PlayPageClient() {
                 ).values()
               )
             );
-          }
-        );
+          });
+        }
       }
 
       if (
